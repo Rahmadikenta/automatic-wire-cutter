@@ -1,0 +1,316 @@
+/*Rahmadi program, pemotong kabel otomatis dengan sensor optocoupler*/
+// ---------------------------------LCD--------------------------------------
+#include <LiquidCrystal_I2C.h>
+LiquidCrystal_I2C lcd(0x27,20,4);
+// ---------------------------------keypad-----------------------------------
+#include <Key.h>
+#include <Keypad.h>
+
+const byte Rows = 4; 
+const byte Cols = 4; 
+
+char keymap[Rows][Cols]=
+{
+ {'1', '2', '3', 'A'},
+
+{'4', '5', '6', 'B'},
+
+{'7', '8', '9', 'C'},
+
+{'*', '0', '#', 'D'}
+};
+
+byte rPins[Rows]= {4,5,6,7}; 
+byte cPins[Cols]= {8,9,10,11}; 
+
+Keypad kpd = Keypad(makeKeymap(keymap), rPins, cPins, Rows, Cols);
+// ---------------------------------relay-----------------------------------
+int relaytarik=12;
+int relaypotong=13;
+// ---------------------------------variabel lama-----------------------------------
+int state = 0;
+int wire_length;
+int wire_amount;
+char input_arr[5];
+
+// ---------------------------------variabel optocoupler-----------------------------------
+const int  Up_buttonPin   = 2;   
+int buttonPushCounter = 0;   
+int up_buttonState = 0;        
+int up_lastButtonState = 0;    
+bool bPress = false;
+// ---------------------------------variabel baru-----------------------------------
+
+int panjang;
+int jumlah = 0;
+int a=0;
+//---------------------------------variabel limitswitch---------------------------------------
+const int  limitSwitchPin   = 3;    
+int hitunglimit = 0;   
+int kondisilimit = 0;         
+int kondisiakhirlimit = 0;     
+bool APress = false;
+
+void setup()
+{
+   pinMode(relaytarik,OUTPUT);
+   pinMode(relaypotong,OUTPUT);
+   //------limitswitch----------
+   pinMode( limitSwitchPin , INPUT_PULLUP);
+   //------relay----------------
+   digitalWrite(relaytarik,LOW);
+   digitalWrite(relaypotong,LOW);
+    LCD_init();
+    //-----opto------------------
+   pinMode(Up_buttonPin,INPUT_PULLUP);
+   Serial.begin(9600);
+  
+  }
+
+void loop()
+{
+  char keypressed;
+  int steps, i = 0;
+  switch(state) 
+  {
+    case 0: //tampilan awal State---------------------------------------------------------------------------------------------
+        homeScreen();
+      do {//menunggu input
+        keypressed = kpd.getKey();
+        if(keypressed == 'A') 
+        { 
+          state++;
+        }
+      } while(keypressed == NO_KEY);
+      break;
+    case 1: //smasukan panjang kabel------------------------------------------------------------------------------------------
+      wirelength();
+      wire_length = input_handler();
+      break;
+    case 2: //masukan jumlah kabel ----------------------------------------------------------------------------------------------
+      wireAmount();
+      wire_amount = input_handler();
+      break;
+    case 3: 
+      confirm();//kofirmasi
+      do {
+        keypressed = kpd.getKey();
+        if(keypressed == '*')
+        {
+          state--;
+        } else if(keypressed == '#') {
+          state++;
+        }
+      } while(keypressed != '#' && keypressed != '*');
+    break;
+    case 4: //mulai ukur dan potong----------------------------------------------------------------------------------------------
+      
+      lcd.clear();
+      delay (500);
+      lcd.print("Mohon menunggu bos");
+       for (int z=0; z<wire_amount;z++){
+        lcd.setCursor (0,1);
+        lcd.print(jumlah);
+       // checkUp();
+        for(int panjangSekarang = 0; buttonPushCounter<wire_length; panjangSekarang++){
+        checkUp();
+        digitalWrite(relaytarik,HIGH);
+        lcd.setCursor (0,3);
+        lcd.print (buttonPushCounter);
+        }
+        digitalWrite(relaytarik,LOW);
+        buttonPushCounter = buttonPushCounter * 0;
+       
+       //----proses potong------------------------------------------------------   
+       motorpotongkerja();
+       jumlah = jumlah + 1;
+        }
+        
+     jumlah = jumlah * 0;
+      state++; 
+      
+      
+      break;
+  case 5: //selesai ----------------------------------------------------------------------------------------------
+    lcd.clear();
+    lcd.print("Selesai!");
+    lcd. setCursor(12,3);
+    lcd.print("#/Lanjut");
+    lcd.setCursor(8,0);
+    do {
+      keypressed = kpd.getKey();
+    }
+    while(keypressed != '#');
+    state = 0;
+    break;
+  default: //error state
+    lcd.clear();
+    lcd.print("ERROR");
+    delay(5000);
+    break;
+  } 
+}
+
+void LCD_init() //tampilan set up 
+{
+  lcd.init();                      
+  lcd.backlight();
+  lcd.cursor();
+  lcd.blink();
+  
+  for (int i = 0; i < 3; i++)
+  {
+    lcd.backlight();
+    delay(150);
+    lcd.noBacklight();
+    delay(150);
+  }
+  lcd.backlight(); // finish with backlight on
+  lcd.setCursor(0, 1);
+  lcd.print("-----MADProject-----");
+  delay(2000);
+  lcd.clear();
+  delay(100);
+}
+
+void homeScreen() //tampilan state 1
+{
+  lcd.clear();
+  lcd.print("MESIN PEMOTONG KABEL");
+  lcd.setCursor(0,1);
+  lcd.print("      OTOMATIS");
+  lcd.setCursor(0,3);
+  lcd.print("             A/Mulai");
+  lcd.setCursor(12,3);
+  
+  }
+
+void wirelength() //menu state2
+{
+  lcd.clear();
+  lcd.print("Panjang kabel:");
+  lcd.setCursor(5,1);
+  lcd.print("cm");
+  lcd.setCursor(0,3);
+  lcd.print("*/kembali   #/Lanjut");
+  lcd.setCursor(0,1);
+}
+
+void wireAmount() //menu state3
+{
+  lcd.clear();
+  lcd.print("Banyak potongan:");
+  lcd.setCursor(5,1);
+  lcd.print("Pcs");
+  lcd.setCursor(0,3);
+  lcd.print("*/kembali   #/Lanjut");
+  lcd.setCursor(0,1);
+}
+
+void confirm() //prints the confirm screen
+{
+  lcd.clear();
+  printNum(wire_amount);
+  lcd.print("x");
+  printNum(wire_length);
+  lcd.print("cm");
+  lcd.setCursor(0,3);
+  lcd.print("*/kembali   #/Lanjut");
+ }
+
+
+int input_handler() 
+{
+  char keypressed;
+  int input_counter = 0;
+  
+  do {//wait for input
+    keypressed = kpd.getKey();
+    if(keypressed != NO_KEY) 
+    { 
+      if(input_counter != 4) 
+      {
+        input_arr[input_counter] = keypressed;
+        input_counter++;
+        lcd.print(keypressed);
+      }
+      input_arr[4] = '\0';
+    }
+  } while(keypressed != '#' && keypressed != '*');
+  if(keypressed == '#') 
+  {
+    sscanf(input_arr,"%d", &input_counter);
+    state++;
+    return input_counter;
+  } else {
+    state--;
+    return 0;
+  }
+}
+
+void printNum(int num) 
+{ 
+  int i = 0;
+  sprintf(input_arr, "%d", num);
+  while(input_arr[i] != '\0') {
+    lcd.print(input_arr[i]);
+    i++;
+  }
+}
+
+void checkUp()
+{
+  if( bPress){
+       bPress = false;
+    }
+  up_buttonState = digitalRead(Up_buttonPin);
+
+  // compare the buttonState to its previous state
+  if (up_buttonState != up_lastButtonState) {
+    // if the state has changed, increment the counter
+    if (up_buttonState == LOW) {
+        bPress = true;
+       buttonPushCounter++;
+       } 
+  delay(10);
+  }
+  up_lastButtonState = up_buttonState;
+}
+
+
+void hitungSaklarMtr()
+{
+  if( APress){
+       APress = false;
+      }
+  kondisilimit = digitalRead(limitSwitchPin);
+  if (kondisilimit != kondisiakhirlimit) {
+     if (kondisilimit == LOW) {
+        APress = true;
+        hitunglimit++;
+     
+    } 
+    delay(50);
+  }
+  kondisiakhirlimit = kondisilimit;
+}
+void cut(){
+ 
+  hitungSaklarMtr() ;
+  hitunglimit = hitunglimit*0;
+  delay(50);
+  digitalWrite (relaypotong,HIGH);
+  if (hitunglimit==2){
+    digitalWrite (relaypotong,LOW);
+    
+  }
+  
+}
+void motorpotongkerja(){
+  for(int putaran=0; hitunglimit<2;putaran++){
+         hitungSaklarMtr();
+         digitalWrite (relaypotong,HIGH); 
+        }
+        digitalWrite (relaypotong,LOW); 
+        hitunglimit=hitunglimit*0;
+}
